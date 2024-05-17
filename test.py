@@ -1,15 +1,23 @@
 import random
 
-from aiokafka import AIOKafkaConsumer, ConsumerRecord
+from aiokafka import AIOKafkaConsumer, ConsumerRecord, TopicPartition
 from aiokafka_retry_lib.retry import retry
 
 
-@retry("asd")
+@retry(
+    bootstrap_servers="127.0.0.1:29092",
+    retriable_exceptions=[ValueError],
+    max_attempts=10,
+)
 async def handle_message(msg: ConsumerRecord, consumer: AIOKafkaConsumer) -> None:
     # raise ValueError("unable to handle this")
     if random.random() > 0.8:
-        raise ValueError("aaaaaaah panic")
-    await consumer.commit()
+        raise ValueError("ValueError aaaaaaah panic")
+    if random.random() > 0.8:
+        raise TypeError("TypeError aaaaaaah panic")
+    print("ah no error, nice", msg.value)
+    tp = TopicPartition(msg.topic, msg.partition)
+    await consumer.commit({tp: msg.offset + 1})
 
 
 async def main():
