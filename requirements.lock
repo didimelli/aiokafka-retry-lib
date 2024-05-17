@@ -9,9 +9,9 @@
 
 -e file:.
 aiokafka==0.10.0
-    # via kafka-retry-lib
+    # via aiokafka-retry-lib
 anyio==4.3.0
-    # via kafka-retry-lib
+    # via aiokafka-retry-lib
 async-timeout==4.0.3
     # via aiokafka
 idna==3.7
