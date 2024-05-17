@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Callable, Coroutine, List, Optional, Sequence, Tuple, Type
 from uuid import uuid4
 
-from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, ConsumerRecord
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, ConsumerRecord, TopicPartition
 
 from aiokafka_retry_lib.errors import RetriableError
 from aiokafka_retry_lib.topics import Topics
@@ -137,6 +137,8 @@ def retry(
                         headers=headers_out.dump(),
                         key=str(uuid4()).encode(),
                     )
+                tp = TopicPartition(msg.topic, msg.partition)
+                await consumer.commit({tp: msg.offset + 1})
 
         return __wrapped
 
