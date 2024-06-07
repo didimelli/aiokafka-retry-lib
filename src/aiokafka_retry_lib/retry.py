@@ -4,7 +4,7 @@ import math
 import random
 from dataclasses import asdict, dataclass
 from logging import getLogger
-from typing import List, Optional, Sequence, Tuple, Type, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Type, Union
 from uuid import uuid4
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, ConsumerRecord, TopicPartition
@@ -31,25 +31,21 @@ class RetryHeadersIn:
     @classmethod
     def parse_incoming_headers(
         cls, headers: Sequence[Tuple[str, bytes]]
-    ) -> Optional["RetryHeadersIn"]:
+    ) -> Tuple[Optional["RetryHeadersIn"], Dict[str, bytes]]:
         as_dict = dict(headers)
-        scheduler_timestamp = as_dict.get("scheduler-timestamp")
-        scheduler_key = as_dict.get("scheduler-key")
-        scheduler_topic = as_dict.get("scheduler-topic")
-        retry_attempt = as_dict.get("retry-attempt")
-        if (
-            scheduler_timestamp is not None
-            and scheduler_key is not None
-            and scheduler_topic is not None
-            and retry_attempt is not None
-        ):
+        try:
+            scheduler_timestamp = as_dict.pop("scheduler-timestamp")
+            scheduler_key = as_dict.pop("scheduler-key")
+            scheduler_topic = as_dict.pop("scheduler-topic")
+            retry_attempt = as_dict.pop("retry-attempt")
             return cls(
                 scheduler_timestamp=int(scheduler_timestamp),
                 scheduler_key=scheduler_key,
                 scheduler_topic=str(scheduler_topic),
                 retry_attempt=int(retry_attempt),
-            )
-        return None
+            ), as_dict
+        except KeyError:
+            return None, as_dict
 
 
 def dump_headers(
@@ -121,15 +117,13 @@ def retry(
             # Catch all exception to then act on them
             except Exception as e:  # noqa: W0718
                 # parse headers
-                headers_in = RetryHeadersIn.parse_incoming_headers(msg.headers)
-                if headers_in is not None:
-                    current_attempt = headers_in.retry_attempt
-                    custom_headers = set(msg.headers).difference(
-                        dump_headers(headers_in)
-                    )
+                retry_headers, custom_headers = RetryHeadersIn.parse_incoming_headers(
+                    msg.headers
+                )
+                if retry_headers is not None:
+                    current_attempt = retry_headers.retry_attempt
                 else:
                     current_attempt = 0
-                    custom_headers = msg.headers
                 producer = AIOKafkaProducer(bootstrap_servers=bootstrap_servers)
                 if type(e) in retriable_exceptions and current_attempt < max_attempts:
                     logger.info(
@@ -151,7 +145,8 @@ def retry(
                             scheduler_topic,
                             msg.value,
                             # merge custom headers with retries ones
-                            headers=dump_headers(headers_out) + list(custom_headers),
+                            headers=dump_headers(headers_out)
+                            + list(custom_headers.items()),
                             key=str(uuid4()).encode(),
                         )
                 else:
