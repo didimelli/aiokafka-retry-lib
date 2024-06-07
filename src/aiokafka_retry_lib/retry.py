@@ -3,10 +3,13 @@ import functools
 import math
 import random
 from dataclasses import asdict, dataclass
+from logging import getLogger
 from typing import List, Optional, Sequence, Tuple, Type, Union
 from uuid import uuid4
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, ConsumerRecord, TopicPartition
+
+logger = getLogger("aiokafka_retry_lib")
 
 
 @dataclass(kw_only=True)
@@ -119,10 +122,13 @@ def retry(
                 current_attempt = 0
             try:
                 return await handler(msg, consumer, *args)
-            except Exception as e:
+            # Catch all exception to then act on them
+            except Exception as e:  # noqa: W0718
                 producer = AIOKafkaProducer(bootstrap_servers=bootstrap_servers)
                 if type(e) in retriable_exceptions and current_attempt < max_attempts:
-                    print("retrying", e, current_attempt)
+                    logger.info(
+                        "Retrying because of %s. Attempt number %s", e, current_attempt
+                    )
                     headers_out = RetryHeadersOut(
                         scheduler_epoch=int(
                             datetime.datetime.now(datetime.UTC).timestamp()
@@ -143,7 +149,7 @@ def retry(
                             key=str(uuid4()).encode(),
                         )
                 else:
-                    print("sending to dlt", current_attempt)
+                    logger.info("Sending to dlt. Attempt number %s", current_attempt)
                     async with producer:
                         await producer.send(
                             msg.topic + dlt_topic_suffix,
