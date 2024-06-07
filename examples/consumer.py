@@ -1,7 +1,10 @@
+import logging
 import random
 
 from aiokafka import AIOKafkaConsumer, ConsumerRecord, TopicPartition
 from aiokafka_retry_lib.retry import retry
+
+logging.basicConfig(level=logging.INFO)
 
 
 @retry(

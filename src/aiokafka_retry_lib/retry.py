@@ -19,17 +19,6 @@ class RetryHeadersOut:
     scheduler_target_key: bytes
     retry_attempt: int
 
-    def dump(self) -> Sequence[Tuple[str, bytes]]:
-        headers = []
-        for kw, val in asdict(self).items():
-            headers.append(
-                (
-                    kw.replace("_", "-"),
-                    str(val).encode() if not isinstance(val, bytes) else val,
-                )
-            )
-        return headers
-
 
 @dataclass(kw_only=True)
 class RetryHeadersIn:
@@ -60,8 +49,21 @@ class RetryHeadersIn:
                 scheduler_topic=str(scheduler_topic),
                 retry_attempt=int(retry_attempt),
             )
-        else:
-            return None
+        return None
+
+
+def dump_headers(
+    headers: Union[RetryHeadersIn, RetryHeadersOut],
+) -> List[Tuple[str, bytes]]:
+    dump = []
+    for kw, val in asdict(headers).items():
+        dump.append(
+            (
+                kw.replace("_", "-"),
+                str(val).encode() if not isinstance(val, bytes) else val,
+            )
+        )
+    return dump
 
 
 DEFAULT_MINIMUM_DURATION = datetime.timedelta(milliseconds=100)
@@ -114,16 +116,20 @@ def retry(
     def __wrapper(handler):
         @functools.wraps(handler)
         async def __wrapped(msg: ConsumerRecord, consumer: AIOKafkaConsumer, *args):
-            # parse headers
-            headers_in = RetryHeadersIn.parse_incoming_headers(msg.headers)
-            if headers_in is not None:
-                current_attempt = headers_in.retry_attempt
-            else:
-                current_attempt = 0
             try:
                 return await handler(msg, consumer, *args)
             # Catch all exception to then act on them
             except Exception as e:  # noqa: W0718
+                # parse headers
+                headers_in = RetryHeadersIn.parse_incoming_headers(msg.headers)
+                if headers_in is not None:
+                    current_attempt = headers_in.retry_attempt
+                    custom_headers = set(msg.headers).difference(
+                        dump_headers(headers_in)
+                    )
+                else:
+                    current_attempt = 0
+                    custom_headers = msg.headers
                 producer = AIOKafkaProducer(bootstrap_servers=bootstrap_servers)
                 if type(e) in retriable_exceptions and current_attempt < max_attempts:
                     logger.info(
@@ -140,12 +146,12 @@ def retry(
                         scheduler_target_key=msg.key or b"retry",
                         retry_attempt=current_attempt + 1,
                     )
-                    # merge custom headers with retries ones
                     async with producer:
                         await producer.send(
                             scheduler_topic,
                             msg.value,
-                            headers=headers_out.dump(),
+                            # merge custom headers with retries ones
+                            headers=dump_headers(headers_out) + list(custom_headers),
                             key=str(uuid4()).encode(),
                         )
                 else:
